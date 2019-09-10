@@ -1187,6 +1187,60 @@ export default class WaveSurfer extends util.Observer {
         }
         this.fireEvent('redraw', peaks, width);
     }
+    
+     // 扩展到 WaveSurfer 构造器中方法
+    // 每一段音频 buffer 产生 peaks 方法
+    getPeaks(arraybuffer, callback) {
+        this.backend.decodeArrayBuffer(
+            arraybuffer,
+            buffer => {
+                if (!this.isDestroyed) {
+                    // https://github.com/katspaugh/wavesurfer.js/blob/832e114b7be6436458fc351a57699ba169d08676/src/wavesurfer.js#L1395-L1396
+                    // decodeArrayBuffer 之后的一个赋值、置空操作。完全模仿
+                    this.backend.buffer = buffer;
+                    this.backend.setPeaks(null);
+                    const nominalWidth = Math.round(
+                        this.getDuration() *
+                            this.params.minPxPerSec *
+                            this.params.pixelRatio
+                    );
+                    const parentWidth = this.drawer.getWidth();
+                    let width = nominalWidth;
+                    let start = 0;
+                    // 此处谨记 end 一定要赋值为 width
+                    // 原本的 let end = Math.max(start + parentWidth, width) 是比较了容器宽度和根据音频时长等计算出的长度，取最大值。
+                    // 那么会在当前的音频分段时长大小(例子是2M音频的时长)所能产生的波形长度小于容器的宽度时
+                    // 出现为了充满容器下面的 this.backend.getPeaks 方法在实际产生的波形信息后面添加不等位数的 0，从而充满容器。
+                    // 但是整个大音频的时长是固定的，根据大音频时长设定的canvas的个数和宽度已经固定
+                    // 如果分段加载之后最后一段如果出现被补0的情况，在最终合并的完整的波形信息就会超过原本设定的预值，导致挤压最终产生的波形
+                    let end = width;
+
+                    if (
+                        this.params.fillParent
+                        && (!this.params.scrollParent || nominalWidth < parentWidth)
+                    ) {
+                        width = parentWidth;
+                    }
+
+                    const peaks = this.backend.getPeaks(width, start, end);
+                    // 通过回调函数的方式把 peaks 传递出去
+                    callback(peaks);
+                    // 清空 arraybuffer 避免占用过多内存
+                    this.arraybuffer = null;
+                    this.backend.buffer = null;
+                }
+            },
+            () => this.fireEvent('error', 'Error decoding audiobuffer')
+        );
+    }
+
+    loadPeaks(peaks) {
+        this.backend.buffer = null;
+        this.backend.setPeaks(peaks);
+        this.drawBuffer();
+        this.fireEvent('waveform-ready');
+        this.isReady = true;
+    }
 
     /**
      * Horizontally zooms the waveform in and out. It also changes the parameter
